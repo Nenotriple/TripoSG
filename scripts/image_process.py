@@ -27,14 +27,19 @@ def load_image(img_path, bg_color=None, rmbg_net=None, padding_ratio=0.1):
         if isinstance(alpha, np.ndarray):
             hist = cv2.calcHist([alpha], [0], None, [bins], [0, 256])
         else:
-            hist = torch.histc(alpha, bins=bins, min=0, max=1) 
+            hist = torch.histc(alpha, bins=bins, min=0, max=1)
         min_hist_val = alpha.shape[0] * alpha.shape[1] * min_ratio
         return hist[0] >= min_hist_val and hist[-1] >= min_hist_val
-    
+
     def rmbg(image: torch.Tensor) -> torch.Tensor:
-        image = TF.normalize(image, [0.5,0.5,0.5], [1.0,1.0,1.0]).unsqueeze(0)
-        result=rmbg_net(image)
-        return result[0][0]
+        # Only call the network if it's provided
+        if rmbg_net is not None:
+            image = TF.normalize(image, [0.5,0.5,0.5], [1.0,1.0,1.0]).unsqueeze(0)
+            result=rmbg_net(image)
+            return result[0][0]
+        else:
+            # Return a default mask of all ones (full foreground) if no network
+            return torch.ones((1, image.shape[1], image.shape[2]), device=image.device)
 
     if len(img.shape) == 2:
         num_channels = 1
@@ -57,11 +62,11 @@ def load_image(img_path, bg_color=None, rmbg_net=None, padding_ratio=0.1):
     rgb_image = None
     alpha = None
 
-    if num_channels == 1:  
+    if num_channels == 1:
         rgb_image = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif num_channels == 3:  
+    elif num_channels == 3:
         rgb_image = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    elif num_channels == 4:  
+    elif num_channels == 4:
         rgb_image = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
 
         b, g, r, alpha = cv2.split(img)
@@ -71,7 +76,7 @@ def load_image(img_path, bg_color=None, rmbg_net=None, padding_ratio=0.1):
             alpha_gpu = torch.from_numpy(alpha).unsqueeze(0).cuda().float() / 255.
     else:
         return f"invalid image: channels {num_channels}"
-    
+
     rgb_image_gpu = torch.from_numpy(rgb_image).cuda().float().permute(2, 0, 1) / 255.
     if alpha is None:
         resize_transform = transforms.Resize((384, 384), antialias=True)
@@ -88,28 +93,36 @@ def load_image(img_path, bg_color=None, rmbg_net=None, padding_ratio=0.1):
         normalize_image = normalize_image.unsqueeze(0)
         resize_transform = transforms.Resize((rgb_image_gpu.shape[1], rgb_image_gpu.shape[2]), antialias=True)
 
-        # seg from rmbg
-        alpha_gpu_rmbg = rmbg(rgb_image_resized)
-        alpha_gpu_rmbg = alpha_gpu_rmbg.squeeze(0)
-        alpha_gpu_rmbg = resize_transform(alpha_gpu_rmbg)
-        ma, mi = alpha_gpu_rmbg.max(), alpha_gpu_rmbg.min()
-        alpha_gpu_rmbg = (alpha_gpu_rmbg - mi) / (ma - mi)
+        if rmbg_net is None:
+            # If no background removal network is provided, treat the whole image as foreground
+            alpha_gpu = torch.ones((1, rgb_image_gpu.shape[1], rgb_image_gpu.shape[2]), device=rgb_image_gpu.device)
+            alpha = np.ones((rgb_image_gpu.shape[1], rgb_image_gpu.shape[2]), dtype=np.uint8) * 255
+            x, y = 0, 0
+            h, w = rgb_image_gpu.shape[1], rgb_image_gpu.shape[2]
+        else:
+            # seg from rmbg
+            alpha_gpu_rmbg = rmbg(rgb_image_resized)
+            alpha_gpu_rmbg = alpha_gpu_rmbg.squeeze(0)
+            alpha_gpu_rmbg = resize_transform(alpha_gpu_rmbg)
+            ma, mi = alpha_gpu_rmbg.max(), alpha_gpu_rmbg.min()
+            alpha_gpu_rmbg = (alpha_gpu_rmbg - mi) / (ma - mi)
 
-        alpha_gpu = alpha_gpu_rmbg
-        
-        alpha_gpu_tmp = alpha_gpu * 255
-        alpha = alpha_gpu_tmp.to(torch.uint8).squeeze().cpu().numpy()
+            alpha_gpu = alpha_gpu_rmbg
 
-        _, alpha = cv2.threshold(alpha, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        labeled_alpha = label(alpha)
-        cleaned_alpha = remove_small_objects(labeled_alpha, min_size=200)
-        cleaned_alpha = (cleaned_alpha > 0).astype(np.uint8)
-        alpha = cleaned_alpha * 255
-        alpha_gpu = torch.from_numpy(cleaned_alpha).cuda().float().unsqueeze(0)
-        x, y, w, h = find_bounding_box(alpha)
+            alpha_gpu_tmp = alpha_gpu * 255
+            alpha = alpha_gpu_tmp.to(torch.uint8).squeeze().cpu().numpy()
+
+            _, alpha = cv2.threshold(alpha, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+            # Convert alpha to boolean and remove small objects
+            alpha_bool = alpha.astype(bool)
+            cleaned_alpha = remove_small_objects(alpha_bool, min_size=200)
+            cleaned_alpha = cleaned_alpha.astype(np.uint8)
+            alpha = cleaned_alpha * 255
+            alpha_gpu = torch.from_numpy(cleaned_alpha).cuda().float().unsqueeze(0)
+            x, y, w, h = find_bounding_box(alpha)
 
     # If alpha is provided, the bounds of all foreground are used
-    else: 
+    else:
         rows, cols = np.where(alpha > 0)
         if rows.size > 0 and cols.size > 0:
             x_min = np.min(cols)
@@ -123,7 +136,7 @@ def load_image(img_path, bg_color=None, rmbg_net=None, padding_ratio=0.1):
 
     if np.all(alpha==0):
         raise ValueError(f"input image too small")
-    
+
     bg_gray = bg_color[0]
     bg_color = torch.from_numpy(bg_color).float().cuda().repeat(alpha_gpu.shape[1], alpha_gpu.shape[2], 1).permute(2, 0, 1)
     rgb_image_gpu = rgb_image_gpu * alpha_gpu + bg_color * (1 - alpha_gpu)
@@ -145,5 +158,5 @@ def prepare_image(image_path, bg_color, rmbg_net=None):
         img_tensor = load_image(image_path, bg_color=bg_color, rmbg_net=rmbg_net)
         img_np = img_tensor.permute(1,2,0).cpu().numpy()
         img_pil = Image.fromarray((img_np*255).astype(np.uint8))
-        
+
         return img_pil
