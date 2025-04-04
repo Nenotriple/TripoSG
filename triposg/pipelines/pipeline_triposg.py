@@ -9,7 +9,7 @@ import torch
 import trimesh
 from diffusers.image_processor import PipelineImageInput
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
-from diffusers.schedulers import FlowMatchEulerDiscreteScheduler  
+from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 from diffusers.utils import logging
 from diffusers.utils.torch_utils import randn_tensor
 from transformers import (
@@ -94,11 +94,11 @@ def retrieve_timesteps(
 
 class TripoSGPipeline(DiffusionPipeline, TransformerDiffusionMixin):
     """
-    Pipeline for image-to-3D generation.        
+    Pipeline for image-to-3D generation.
     """
 
     def __init__(
-        self,   
+        self,
         vae: TripoSGVAEModel,
         transformer: TripoSGDiTModel,
         scheduler: FlowMatchEulerDiscreteScheduler,
@@ -193,7 +193,7 @@ class TripoSGPipeline(DiffusionPipeline, TransformerDiffusionMixin):
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         bounds: Union[Tuple[float], List[float], float] = (-1.005, -1.005, -1.005, 1.005, 1.005, 1.005),
-        dense_octree_depth: int = 8, 
+        dense_octree_depth: int = 8,
         hierarchical_octree_depth: int = 9,
         return_dict: bool = True,
     ):
@@ -321,7 +321,7 @@ class TripoSGPipeline(DiffusionPipeline, TransformerDiffusionMixin):
             hierarchical_octree_depth=hierarchical_octree_depth,
         )
         meshes = [trimesh.Trimesh(mesh_v_f[0].astype(np.float32), mesh_v_f[1]) for mesh_v_f in output]
-        
+
         # Offload all models
         self.maybe_free_model_hooks()
 
