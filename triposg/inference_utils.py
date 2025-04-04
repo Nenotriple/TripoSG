@@ -12,11 +12,11 @@ def generate_dense_grid_points_gpu(bbox_min: torch.Tensor,
     length = bbox_max - bbox_min
     num_cells = 2 ** octree_depth
     device = bbox_min.device
-    
+
     x = torch.linspace(bbox_min[0], bbox_max[0], int(num_cells), dtype=torch.float16, device=device)
     y = torch.linspace(bbox_min[1], bbox_max[1], int(num_cells), dtype=torch.float16, device=device)
     z = torch.linspace(bbox_min[2], bbox_max[2], int(num_cells), dtype=torch.float16, device=device)
-    
+
     xs, ys, zs = torch.meshgrid(x, y, z, indexing=indexing)
     xyz = torch.stack((xs, ys, zs), dim=-1)
     xyz = xyz.view(-1, 3)
@@ -77,9 +77,9 @@ def find_candidates_band(occupancy_grid: torch.Tensor, band_threshold: float, n_
     Returns:
         torch.Tensor: A 2D tensor of coordinates (N x 3) where each row is [x, y, z].
     """
-    core_grid = occupancy_grid[1:-1, 1:-1, 1:-1]  
+    core_grid = occupancy_grid[1:-1, 1:-1, 1:-1]
     # logits to sdf
-    core_grid = torch.sigmoid(core_grid) * 2 - 1  
+    core_grid = torch.sigmoid(core_grid) * 2 - 1
     # Create a boolean mask for all cells in the band
     in_band = torch.abs(core_grid) < band_threshold
 
@@ -91,7 +91,7 @@ def find_candidates_band(occupancy_grid: torch.Tensor, band_threshold: float, n_
         ind = np.random.choice(core_mesh_coords.shape[0], n_limits, True)
         core_mesh_coords = core_mesh_coords[ind]
 
-    return core_mesh_coords 
+    return core_mesh_coords
 
 def expand_edge_region_fast(edge_coords, grid_size):
     expanded_tensor = torch.zeros(grid_size, grid_size, grid_size, device='cuda', dtype=torch.float16, requires_grad=False)
@@ -152,7 +152,7 @@ def hierarchical_extract_geometry(geometric_func: Callable,
         octree_depth=dense_octree_depth,
         indexing="ij"
     )
-    
+
     print(f'step 1 query num: {xyz_samples.shape[0]}')
     grid_logits = geometric_func(xyz_samples.unsqueeze(0)).to(torch.float16).view(grid_size[0], grid_size[1], grid_size[2])
     # print(f'step 1 grid_logits shape: {grid_logits.shape}')
