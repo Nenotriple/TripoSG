@@ -163,3 +163,4 @@ cython_debug/
 /images
 /pretrained_weights
 Start.bat
+*.glb
