@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 from glob import glob
-from typing import Any, Union
+from typing import Any, List, Union
 
 import numpy as np
 import torch
@@ -21,17 +21,18 @@ from briarmbg import BriaRMBG
 @torch.no_grad()
 def run_triposg(
     pipe: Any,
-    image_input: Union[str, Image.Image],
+    image_inputs: List[Union[str, Image.Image]],
     rmbg_net: Any,
     seed: int,
     num_inference_steps: int = 50,
     guidance_scale: float = 7.0,
 ) -> trimesh.Scene:
 
-    img_pil = prepare_image(image_input, bg_color=np.array([1.0, 1.0, 1.0]), rmbg_net=rmbg_net)
+    # Process all input images
+    img_pils = [prepare_image(img_input, bg_color=np.array([1.0, 1.0, 1.0]), rmbg_net=rmbg_net) for img_input in image_inputs]
 
     outputs = pipe(
-        image=img_pil,
+        image=img_pils,
         generator=torch.Generator(device=pipe.device).manual_seed(seed),
         num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
@@ -45,13 +46,33 @@ if __name__ == "__main__":
     dtype = torch.float16
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--image-input", type=str, required=True)
+    parser.add_argument("--image-input", type=str, required=False,
+                        help="Path to a single input image (for backward compatibility)")
+    parser.add_argument("--image-inputs", type=str, nargs='+', required=False,
+                        help="List of paths to input images")
     parser.add_argument("--output-dir", type=str, default="./")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-inference-steps", type=int, default=50)
     parser.add_argument("--guidance-scale", type=float, default=7.0)
     parser.add_argument("--rmbg-net-enable", type=lambda x: x.lower() == 'true', default=True, help="Enable background removal")
     args = parser.parse_args()
+
+    # Handle input images (supporting both single input and multiple inputs)
+    image_inputs = []
+    if args.image_inputs:
+        image_inputs = args.image_inputs
+    elif args.image_input:
+        image_inputs = [args.image_input]
+    else:
+        parser.error("Either --image-input or --image-inputs must be provided")
+
+    # Check if all image paths exist
+    for img_path in image_inputs:
+        if not os.path.exists(img_path):
+            print(f"Error: Image path does not exist: {img_path}")
+            sys.exit(1)
+
+    print(f"Processing {len(image_inputs)} input images...")
 
     # download pretrained weights
     triposg_weights_dir = "pretrained_weights/TripoSG"
@@ -71,7 +92,7 @@ if __name__ == "__main__":
     # run inference
     run_triposg(
         pipe,
-        image_input=args.image_input,
+        image_inputs=image_inputs,
         rmbg_net=rmbg_net,
         seed=args.seed,
         num_inference_steps=args.num_inference_steps,

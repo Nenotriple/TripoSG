@@ -142,11 +142,41 @@ class TripoSGPipeline(DiffusionPipeline, TransformerDiffusionMixin):
     def encode_image(self, image, device, num_images_per_prompt):
         dtype = next(self.image_encoder_dinov2.parameters()).dtype
 
-        if not isinstance(image, torch.Tensor):
-            image = self.feature_extractor_dinov2(image, return_tensors="pt").pixel_values
+        # Handle multiple images
+        if isinstance(image, list):
+            if not isinstance(image[0], torch.Tensor):
+                image_tensors = [self.feature_extractor_dinov2(img, return_tensors="pt").pixel_values for img in image]
+                image = torch.cat(image_tensors, dim=0)
 
-        image = image.to(device=device, dtype=dtype)
-        image_embeds = self.image_encoder_dinov2(image).last_hidden_state
+            # Process each image and average the embeddings
+            image = image.to(device=device, dtype=dtype)
+            batch_size = image.shape[0]
+            image_embeds_list = []
+
+            # Process images in batches if there are too many to fit in memory
+            for i in range(0, batch_size, 4):  # Process in batches of 4
+                batch = image[i:i+4]
+                batch_embeds = self.image_encoder_dinov2(batch).last_hidden_state
+                image_embeds_list.append(batch_embeds)
+
+            image_embeds = torch.cat(image_embeds_list, dim=0)
+
+            # Average embeddings from multiple images
+            # Reshape to group by image
+            image_embeds = image_embeds.view(batch_size, -1, image_embeds.shape[-1])
+            # Average over all images
+            image_embeds = torch.mean(image_embeds, dim=0, keepdim=True)
+            # Back to original format
+            image_embeds = image_embeds.view(1, -1, image_embeds.shape[-1])
+        else:
+            # Original code for single image
+            if not isinstance(image, torch.Tensor):
+                image = self.feature_extractor_dinov2(image, return_tensors="pt").pixel_values
+
+            image = image.to(device=device, dtype=dtype)
+            image_embeds = self.image_encoder_dinov2(image).last_hidden_state
+
+        # Continue with the rest of the original implementation
         image_embeds = image_embeds.repeat_interleave(num_images_per_prompt, dim=0)
         uncond_image_embeds = torch.zeros_like(image_embeds)
 
@@ -206,7 +236,8 @@ class TripoSGPipeline(DiffusionPipeline, TransformerDiffusionMixin):
         if isinstance(image, PIL.Image.Image):
             batch_size = 1
         elif isinstance(image, list):
-            batch_size = len(image)
+            # When processing multiple images, we still want batch_size=1 for the final output
+            batch_size = 1
         elif isinstance(image, torch.Tensor):
             batch_size = image.shape[0]
         else:
