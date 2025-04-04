@@ -36,7 +36,7 @@ def run_triposg(
         num_inference_steps=num_inference_steps,
         guidance_scale=guidance_scale,
     ).samples[0]
-    mesh = trimesh.Trimesh(outputs[0].astype(np.float32), np.ascontiguousarray(outputs[1]))    
+    mesh = trimesh.Trimesh(outputs[0].astype(np.float32), np.ascontiguousarray(outputs[1]))
     return mesh
 
 
@@ -50,17 +50,20 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-inference-steps", type=int, default=50)
     parser.add_argument("--guidance-scale", type=float, default=7.0)
+    parser.add_argument("--rmbg-net-enable", type=lambda x: x.lower() == 'true', default=True, help="Enable background removal")
     args = parser.parse_args()
 
     # download pretrained weights
     triposg_weights_dir = "pretrained_weights/TripoSG"
     rmbg_weights_dir = "pretrained_weights/RMBG-1.4"
     snapshot_download(repo_id="VAST-AI/TripoSG", local_dir=triposg_weights_dir)
-    snapshot_download(repo_id="briaai/RMBG-1.4", local_dir=rmbg_weights_dir)
 
-    # init rmbg model for background removal
-    rmbg_net = BriaRMBG.from_pretrained(rmbg_weights_dir).to(device)
-    rmbg_net.eval() 
+    # init rmbg model for background removal if enabled
+    rmbg_net = None
+    if args.rmbg_net_enable:
+        snapshot_download(repo_id="briaai/RMBG-1.4", local_dir=rmbg_weights_dir)
+        rmbg_net = BriaRMBG.from_pretrained(rmbg_weights_dir).to(device)
+        rmbg_net.eval()
 
     # init tripoSG pipeline
     pipe: TripoSGPipeline = TripoSGPipeline.from_pretrained(triposg_weights_dir).to(device, dtype)
